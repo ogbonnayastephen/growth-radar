@@ -1,0 +1,27 @@
+name: Community Growth Radar
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'   # Every Monday 7am UTC
+    - cron: '0 7 * * 4'   # Every Thursday 7am UTC
+  workflow_dispatch:       # Allow manual trigger
+
+jobs:
+  run-radar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Community Growth Radar
+        run: python main.py --once
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
