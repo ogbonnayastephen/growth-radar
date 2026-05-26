@@ -151,12 +151,12 @@ if run_button:
             st.error("No events found for these cities. Try selecting different cities.")
             st.stop()
 
-        st.write("Scoring events with Claude AI. This takes a few minutes...")
         scored = []
         failed = 0
         last_error = ""
         progress = st.progress(0)
-        sample = events[:50]
+        sample = events[:150]
+        st.write(f"Scoring up to {len(sample)} events with Claude AI. This takes {len(sample)//20} to {len(sample)//10} minutes. Please keep this tab open...")
 
         for i, event in enumerate(sample):
             try:
