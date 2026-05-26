@@ -1,3 +1,5 @@
+import csv
+import io
 import os
 import sys
 from datetime import date
@@ -110,91 +112,22 @@ run_button = st.button(
 )
 
 
-# ── PDF generator ─────────────────────────────────────────────────────────────
-def generate_pdf(top_events: list[dict], total_scanned: int,
-                 name: str, email: str) -> bytes:
-    from fpdf import FPDF
-
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-
-    today_str = date.today().strftime("%B %d, %Y")
-    recipient = name.strip() or email.strip() or "Community Growth Radar User"
-
-    # Header block
-    pdf.set_fill_color(26, 92, 56)
-    pdf.rect(0, 0, 210, 38, "F")
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_y(8)
-    pdf.cell(0, 10, "COMMUNITY GROWTH RADAR", ln=True, align="C")
-    pdf.set_font("Helvetica", "", 12)
-    pdf.cell(0, 7, "Event Intelligence Report", ln=True, align="C")
-    pdf.set_y(42)
-
-    # Meta
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Generated: {today_str}", ln=True, align="C")
-    pdf.cell(0, 6, f"Prepared for: {recipient}", ln=True, align="C")
-    pdf.ln(3)
-
-    # Stats bar
-    pdf.set_fill_color(240, 247, 243)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(
-        0, 10,
-        f"  Events Scanned: {total_scanned}     Opportunities Found: {len(top_events)}",
-        ln=True, fill=True,
-    )
-    pdf.ln(4)
-
-    # Events
-    for e in top_events:
-        name_ev = e.get("name", "Untitled")
-        city = e.get("city", "")
-        start_date = e.get("start_date") or "TBD"
-        score = e.get("opportunity_score", 0)
-        action = (e.get("recommended_action") or "").replace("_", " ").title()
-        why = e.get("action_reason", "")
-        url = e.get("url", "")
-
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.set_text_color(26, 92, 56)
-        pdf.multi_cell(0, 7, name_ev)
-
-        pdf.set_font("Helvetica", "", 10)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 6, f"{city}  |  {start_date}  |  Score: {score}/10", ln=True)
-        pdf.cell(0, 6, f"Recommended Action: {action}", ln=True)
-
-        if why:
-            pdf.set_font("Helvetica", "I", 10)
-            pdf.multi_cell(0, 6, f"Why: {why}")
-
-        if url:
-            pdf.set_font("Helvetica", "", 9)
-            short_url = url[:80] + "..." if len(url) > 80 else url
-            pdf.set_text_color(26, 92, 56)
-            try:
-                pdf.multi_cell(0, 5, short_url)
-            except Exception:
-                pdf.cell(0, 5, "URL too long to display", ln=True)
-            pdf.set_text_color(0, 0, 0)
-
-        pdf.ln(2)
-        pdf.set_draw_color(212, 160, 23)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(4)
-
-    # Footer
-    pdf.set_font("Helvetica", "I", 9)
-    pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 6, "Community Growth Radar — free and open source", ln=True, align="C")
-    pdf.cell(0, 5, "github.com/ogbonnayastephen/community-growth-radar", ln=True, align="C")
-
-    return bytes(pdf.output())
+# ── CSV generator ─────────────────────────────────────────────────────────────
+def generate_csv(events: list[dict]) -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Event Name", "City", "Date", "Score", "Action", "Why", "URL"])
+    for e in events:
+        writer.writerow([
+            e.get("name", ""),
+            e.get("city", ""),
+            e.get("start_date", "TBD"),
+            e.get("opportunity_score", ""),
+            e.get("recommended_action", ""),
+            e.get("action_reason", ""),
+            e.get("url", ""),
+        ])
+    return output.getvalue().encode("utf-8")
 
 
 # ── Validation + execution ────────────────────────────────────────────────────
@@ -293,15 +226,15 @@ if run_button:
             row[4].write(action)
             row[5].write(why)
 
-        # ── PDF download ──────────────────────────────────────────────────────
+        # ── CSV download ──────────────────────────────────────────────────────
         st.divider()
         today_str = date.today().strftime("%Y-%m-%d")
-        pdf_bytes = generate_pdf(top_events, len(events), business_name, report_email)
+        csv_bytes = generate_csv(top_events)
         st.download_button(
-            label="Download PDF Report",
-            data=pdf_bytes,
-            file_name=f"community-growth-radar-{today_str}.pdf",
-            mime="application/pdf",
+            label="Download Report (CSV — opens in Excel)",
+            data=csv_bytes,
+            file_name=f"community-growth-radar-{today_str}.csv",
+            mime="text/csv",
             use_container_width=True,
         )
     else:
