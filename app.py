@@ -152,26 +152,32 @@ if run_button:
             st.stop()
 
         st.write("Scoring events with Claude AI. This takes a few minutes...")
-        all_scored = []
-        total_to_score = min(len(events), 200)
+        scored = []
+        failed = 0
+        last_error = ""
         progress = st.progress(0)
-        for i, event in enumerate(events[:200]):
-            score_data = score_event(event)
-            all_scored.append({**event, **score_data})
-            if total_to_score > 0:
-                progress.progress((i + 1) / total_to_score)
+        sample = events[:50]
 
-        scored = [e for e in all_scored if e.get("opportunity_score", 0) > 3]
+        for i, event in enumerate(sample):
+            try:
+                result = score_event(event)
+                if "error" in result:
+                    failed += 1
+                    last_error = result.get("error", "")
+                elif result.get("opportunity_score", 0) > 3:
+                    scored.append({**event, **result})
+            except Exception as ex:
+                failed += 1
+                last_error = str(ex)
+            progress.progress((i + 1) / len(sample))
 
+        st.write(f"Scored {len(sample)} events: {len(scored)} passed, {failed} failed")
+        if last_error:
+            st.error(f"Scoring error: {last_error}")
         if not scored:
-            st.warning(
-                f"Found {len(events)} events but none scored above 3. "
-                "This may indicate an API key issue. "
-                "Please verify your Anthropic key has credits at console.anthropic.com"
-            )
             st.stop()
 
-        st.write(f"Scored {len(scored)} relevant events. Ranking top opportunities...")
+        st.write(f"Ranking top opportunities...")
         scored.sort(key=lambda x: x.get("start_date") or "9999")
         top_events = scored[:TOP_N_EVENTS]
 
