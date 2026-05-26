@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import date
 
 import streamlit as st
 
@@ -8,7 +9,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scrapers.events import scrape_events
 from scoring.event_scorer import score_event
 from scoring.city_scorer import score_city
-from alerts.digest import send_batch_email
 import config
 from config import MIN_SCORE_THRESHOLD, TOP_N_EVENTS
 
@@ -30,7 +30,7 @@ st.markdown(
       </p>
       <p style="color:#a8d5b5;margin:0;font-size:14px;">
         Finds events where you can sponsor, partner, attend, and grow —
-        delivered to your inbox.
+        download your report as a PDF.
       </p>
     </div>
     """,
@@ -45,18 +45,16 @@ with st.expander("How it works"):
         """
 **Step 1** — Get a free Anthropic API key at [console.anthropic.com](https://console.anthropic.com) (add $5 credit — lasts ~10 runs)
 
-**Step 2** — Get a free Resend API key at [resend.com](https://resend.com) (sign up with Google)
+**Step 2** — Enter your key below, select your cities, and click **Run**
 
-**Step 3** — Enter both keys below, select your cities, and click **Run**
+**Step 3** — View your results on screen and download a PDF report
 
-**Step 4** — Check your inbox in 10–15 minutes
-
-> **Your keys are never stored.** They are used only for your current session and discarded when you close this page.
+> **Your key is never stored.** It is used only for your current session and discarded when you close this page.
         """
     )
 
-# ── API Keys ──────────────────────────────────────────────────────────────────
-st.subheader("API Keys")
+# ── Inputs ────────────────────────────────────────────────────────────────────
+st.subheader("API Key")
 
 anthropic_key = st.text_input(
     "Anthropic API Key",
@@ -66,18 +64,18 @@ anthropic_key = st.text_input(
 )
 st.caption("→ Get your key at [console.anthropic.com](https://console.anthropic.com)")
 
-resend_key = st.text_input(
-    "Resend API Key",
-    type="password",
-    placeholder="re_...",
-    help="Get yours free at resend.com",
-)
-st.caption("→ Get your key at [resend.com](https://resend.com)")
+st.subheader("Report Details (optional)")
 
-alert_email = st.text_input(
+business_name = st.text_input(
+    "Your Name or Business Name",
+    placeholder="e.g. Zicky Consulting",
+    help="Appears in the PDF header",
+)
+
+report_email = st.text_input(
     "Your Email Address",
     placeholder="you@email.com",
-    help="Where your intelligence report will be sent",
+    help="Shown on the PDF as 'Report prepared for' — not used to send anything",
 )
 
 # ── City selector ─────────────────────────────────────────────────────────────
@@ -111,30 +109,102 @@ run_button = st.button(
     disabled=too_many,
 )
 
+
+# ── PDF generator ─────────────────────────────────────────────────────────────
+def generate_pdf(top_events: list[dict], total_scanned: int,
+                 name: str, email: str) -> bytes:
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    today_str = date.today().strftime("%B %d, %Y")
+    recipient = name.strip() or email.strip() or "Community Growth Radar User"
+
+    # Header block
+    pdf.set_fill_color(26, 92, 56)
+    pdf.rect(0, 0, 210, 38, "F")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_y(8)
+    pdf.cell(0, 10, "COMMUNITY GROWTH RADAR", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 7, "Event Intelligence Report", ln=True, align="C")
+    pdf.set_y(42)
+
+    # Meta
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, f"Generated: {today_str}", ln=True, align="C")
+    pdf.cell(0, 6, f"Prepared for: {recipient}", ln=True, align="C")
+    pdf.ln(3)
+
+    # Stats bar
+    pdf.set_fill_color(240, 247, 243)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(
+        0, 10,
+        f"  Events Scanned: {total_scanned}     Opportunities Found: {len(top_events)}",
+        ln=True, fill=True,
+    )
+    pdf.ln(4)
+
+    # Events
+    for e in top_events:
+        name_ev = e.get("name", "Untitled")
+        city = e.get("city", "")
+        start_date = e.get("start_date") or "TBD"
+        score = e.get("opportunity_score", 0)
+        action = (e.get("recommended_action") or "").replace("_", " ").title()
+        why = e.get("action_reason", "")
+        url = e.get("url", "")
+
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(26, 92, 56)
+        pdf.multi_cell(0, 7, name_ev)
+
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, f"{city}  |  {start_date}  |  Score: {score}/10", ln=True)
+        pdf.cell(0, 6, f"Recommended Action: {action}", ln=True)
+
+        if why:
+            pdf.set_font("Helvetica", "I", 10)
+            pdf.multi_cell(0, 6, f"Why: {why}")
+
+        if url:
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(26, 92, 56)
+            pdf.multi_cell(0, 5, url)
+            pdf.set_text_color(0, 0, 0)
+
+        pdf.ln(2)
+        pdf.set_draw_color(212, 160, 23)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(4)
+
+    # Footer
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 6, "Community Growth Radar — free and open source", ln=True, align="C")
+    pdf.cell(0, 5, "github.com/ogbonnayastephen/community-growth-radar", ln=True, align="C")
+
+    return bytes(pdf.output())
+
+
 # ── Validation + execution ────────────────────────────────────────────────────
 if run_button:
     if not anthropic_key or not anthropic_key.startswith("sk-ant-"):
         st.error("Please enter a valid Anthropic API key starting with sk-ant-")
         st.stop()
 
-    if not resend_key or not resend_key.startswith("re_"):
-        st.error("Please enter a valid Resend API key starting with re_")
-        st.stop()
-
-    if not alert_email or "@" not in alert_email:
-        st.error("Please enter a valid email address")
-        st.stop()
-
     if not selected_cities:
         st.error("Please select at least one city")
         st.stop()
 
-    # Inject keys into environment for this session
     os.environ["ANTHROPIC_API_KEY"] = anthropic_key
-    os.environ["RESEND_API_KEY"] = resend_key
-    os.environ["ALERT_EMAIL"] = alert_email
 
-    # Override config with user-selected cities
     config.CITIES = selected_cities
     config.CITIES_PER_RUN = len(selected_cities)
 
@@ -148,10 +218,11 @@ if run_button:
         total_to_score = min(len(events), 200)
         progress = st.progress(0)
         for i, event in enumerate(events[:200]):
-            score = score_event(event)
-            if score.get("opportunity_score", 0) > MIN_SCORE_THRESHOLD:
-                scored.append({**event, **score})
-            progress.progress((i + 1) / total_to_score)
+            score_data = score_event(event)
+            if score_data.get("opportunity_score", 0) > MIN_SCORE_THRESHOLD:
+                scored.append({**event, **score_data})
+            if total_to_score > 0:
+                progress.progress((i + 1) / total_to_score)
 
         st.write(f"Scored {len(scored)} relevant events. Ranking top opportunities...")
         scored.sort(key=lambda x: x.get("start_date") or "9999")
@@ -169,18 +240,9 @@ if run_button:
             )
             city_scores.append(cs)
 
-        st.write("Sending your report via email...")
-        send_batch_email(
-            top_events,
-            city_scores,
-            len(events),
-            resend_key=resend_key,
-            alert_email=alert_email,
-        )
-
         status.update(label="Done!", state="complete")
 
-    # ── Full results table ────────────────────────────────────────────────────
+    # ── Results table ─────────────────────────────────────────────────────────
     if top_events:
         st.markdown("### Your Top Events — Plan Ahead")
 
@@ -194,7 +256,7 @@ if run_button:
         st.divider()
 
         for e in top_events:
-            name = e.get("name", "Untitled")
+            name_ev = e.get("name", "Untitled")
             url = e.get("url", "")
             city = e.get("city", "")
             start_date = e.get("start_date") or "TBD"
@@ -210,18 +272,26 @@ if run_button:
                 score_md = f"{score}/10"
 
             row = st.columns([3, 1.5, 1.2, 0.8, 1.8, 3])
-            row[0].markdown(f"[{name}]({url})" if url else name)
+            row[0].markdown(f"[{name_ev}]({url})" if url else name_ev)
             row[1].write(city)
             row[2].write(start_date)
             row[3].markdown(score_md)
             row[4].write(action)
             row[5].write(why)
 
-    st.success(
-        f"Your report is on its way to **{alert_email}**. "
-        "Check your inbox in the next few minutes. "
-        "Check spam if it doesn't arrive."
-    )
+        # ── PDF download ──────────────────────────────────────────────────────
+        st.divider()
+        today_str = date.today().strftime("%Y-%m-%d")
+        pdf_bytes = generate_pdf(top_events, len(events), business_name, report_email)
+        st.download_button(
+            label="Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"community-growth-radar-{today_str}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    else:
+        st.info("No high-scoring events found for the selected cities. Try adding more cities or lowering the score threshold in config.py.")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
