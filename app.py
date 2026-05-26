@@ -175,8 +175,12 @@ def generate_pdf(top_events: list[dict], total_scanned: int,
 
         if url:
             pdf.set_font("Helvetica", "", 9)
+            short_url = url[:80] + "..." if len(url) > 80 else url
             pdf.set_text_color(26, 92, 56)
-            pdf.multi_cell(0, 5, url)
+            try:
+                pdf.multi_cell(0, 5, short_url)
+            except Exception:
+                pdf.cell(0, 5, "URL too long to display", ln=True)
             pdf.set_text_color(0, 0, 0)
 
         pdf.ln(2)
