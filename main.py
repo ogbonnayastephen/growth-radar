@@ -19,16 +19,40 @@ from alerts.digest import send_batch_email
 
 def _load_profile_into_config():
     """
-    Load radar_profile.json into config at runtime.
-    Falls back to config defaults if no profile exists.
+    Load audience profile into config at runtime.
+    Priority order:
+    1. RADAR_PROFILE environment variable (JSON string) — used by GitHub Actions
+    2. radar_profile.json file — used by local runs
+    3. Config defaults — fallback
     """
-    profile = load_profile()
+    profile = {}
+
+    # Try env var first (GitHub Actions / cloud)
+    radar_profile_env = os.environ.get("RADAR_PROFILE", "").strip()
+    if radar_profile_env:
+        try:
+            import json as _json
+            profile = _json.loads(radar_profile_env)
+            print("[INFO] Loaded profile from RADAR_PROFILE environment variable.")
+        except Exception as e:
+            print(f"[WARN] Could not parse RADAR_PROFILE env var: {e}. Falling back to file.")
+
+    # Fall back to radar_profile.json
+    if not profile:
+        profile = load_profile()
+        if profile:
+            print("[INFO] Loaded profile from radar_profile.json.")
+
+    if not profile:
+        print("[INFO] No profile found — using config defaults.")
+
     if profile.get("community"):
         config.COMMUNITY = profile["community"]
     if profile.get("keywords"):
         config.KEYWORDS = profile["keywords"]
     if profile.get("cities"):
         config.CITIES = profile["cities"]
+
     print(f"[INFO] Community: {config.COMMUNITY}")
     print(f"[INFO] Keywords: {', '.join(config.KEYWORDS[:5])}{'...' if len(config.KEYWORDS) > 5 else ''}")
     print(f"[INFO] Cities pool: {', '.join(config.CITIES)}")
