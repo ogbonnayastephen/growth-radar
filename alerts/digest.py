@@ -71,7 +71,7 @@ def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Community Growth Radar</title>
+<title>Growth Radar</title>
 </head>
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:20px 0;">
@@ -82,7 +82,7 @@ def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) 
         <tr>
           <td style="background:#1A5C38;padding:32px 40px;text-align:center;">
             <h1 style="margin:0;color:#ffffff;font-size:28px;letter-spacing:2px;text-transform:uppercase;">
-              Community Growth Radar
+              Growth Radar
             </h1>
             <p style="margin:8px 0 0;color:#a8d5b5;font-size:14px;">{today}</p>
           </td>
@@ -164,7 +164,7 @@ def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) 
         <tr>
           <td style="background:#1A5C38;padding:20px 40px;text-align:center;">
             <p style="margin:0;color:#a8d5b5;font-size:13px;">
-              Community Growth Radar · Free &amp; Open Source
+              Growth Radar · Free &amp; Open Source
             </p>
           </td>
         </tr>
@@ -198,7 +198,7 @@ def send_batch_email(
     today_date = date.today().strftime("%Y-%m-%d")
     top_city = city_scores[0]["city"] if city_scores else "N/A"
     subject = (
-        f"Community Growth Radar — {len(events)} Upcoming Events"
+        f"Growth Radar — {len(events)} Upcoming Events"
         f" | Top City: {top_city} | {today_date}"
     )
 
@@ -209,7 +209,7 @@ def send_batch_email(
             "Content-Type": "application/json",
         },
         json={
-            "from": "Community Growth Radar <onboarding@resend.dev>",
+            "from": "Growth Radar <onboarding@resend.dev>",
             "to": [to_email],
             "subject": subject,
             "html": html,
