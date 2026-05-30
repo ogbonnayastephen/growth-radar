@@ -398,6 +398,34 @@ Format the output as plain text only. Start with "Subject: " on the first line, 
         use_container_width=True,
     )
 
+# ── GitHub Actions Sync ───────────────────────────────────────────────────────
+st.divider()
+with st.expander("⚙️ Sync your profile to the weekly email automation (GitHub Actions)"):
+    st.markdown("""
+**Want your weekly email to use your current community profile?**
+
+Every time you update your community, keywords, or cities — copy the JSON below and update your GitHub secret.
+
+**Steps:**
+1. Copy the JSON below
+2. Go to your GitHub repo → **Settings → Secrets and variables → Actions**
+3. Find `RADAR_PROFILE` and click **Update** (or **New secret** if first time)
+4. Paste the JSON as the value and save
+5. Your next automated run will use this profile
+""")
+    import json as _json
+    current_profile = {
+        "community": community_description if community_description else saved_profile.get("community", ""),
+        "keywords": [k.strip() for k in keywords_raw.split(",") if k.strip()] if keywords_raw else saved_profile.get("keywords", []),
+        "cities": selected_cities if selected_cities else saved_profile.get("cities", []),
+    }
+    st.text_area(
+        "Copy this and paste it as your RADAR_PROFILE secret on GitHub",
+        value=_json.dumps(current_profile, indent=2),
+        height=200,
+        key="profile_json_display",
+    )
+
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption(
