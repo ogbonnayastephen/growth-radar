@@ -86,7 +86,14 @@ with st.expander("⚡ Quick setup — paste your website and we'll fill this in 
                 try:
                     import requests as _requests
                     from bs4 import BeautifulSoup as _BS
-                    resp = _requests.get(website_url.strip(), headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                    url = website_url.strip()
+                    if not url.startswith("http://") and not url.startswith("https://"):
+                        url = "https://" + url
+                    try:
+                        resp = _requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                    except Exception:
+                        www_url = url.replace("https://", "https://www.").replace("http://", "http://www.")
+                        resp = _requests.get(www_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
                     soup = _BS(resp.text, "html.parser")
                     for tag in soup(["script", "style", "nav", "footer", "header"]):
                         tag.decompose()
