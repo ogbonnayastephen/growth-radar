@@ -18,8 +18,8 @@ def _get_client():
     return _CLIENT
 
 
-def _build_system_prompt() -> str:
-    community = getattr(config, "COMMUNITY", "business owners and entrepreneurs")
+def _build_system_prompt(community=None) -> str:
+    community = community or getattr(config, "COMMUNITY", "business owners and entrepreneurs")
     return f"""You are a market expansion strategist helping a founder identify which US cities have the most untapped opportunity for community outreach.
 
 The founder's target community is: {community}
@@ -40,20 +40,22 @@ def score_city(
     event_count: int,
     group_count: int,
     top_event_names: list[str],
+    community: str = None,
 ) -> dict:
+    community = community or getattr(config, "COMMUNITY", "business owners and entrepreneurs")
     prompt = (
         f"City: {city}\n"
         f"Events found: {event_count}\n"
-        f"Groups found: {group_count}\n"
+        f"Distinct organizers found: {group_count}\n"
         f"Top event names: {json.dumps(top_event_names)}\n"
-        f"Target community: {getattr(config, 'COMMUNITY', 'business owners and entrepreneurs')}"
+        f"Target community: {community}"
     )
 
     try:
         response = _get_client().messages.create(
             model=MODEL,
             max_tokens=400,
-            system=_build_system_prompt(),
+            system=_build_system_prompt(community),
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text.strip()
@@ -74,7 +76,7 @@ def score_city(
         }
 
 
-def score_cities(scored_events: list[dict]) -> list[dict]:
+def score_cities(scored_events: list[dict], community: str = None) -> list[dict]:
     cities_seen = {}
     for e in scored_events:
         city = e.get("city", "")
@@ -86,7 +88,12 @@ def score_cities(scored_events: list[dict]) -> list[dict]:
     results = []
     for city, events in cities_seen.items():
         top_names = [e.get("name", "") for e in events[:3]]
-        cs = score_city(city, len(events), len(events), top_names)
+        organizer_count = len(set(
+            e.get("organizer", "").strip()
+            for e in events
+            if e.get("organizer", "").strip()
+        ))
+        cs = score_city(city, len(events), organizer_count or len(events), top_names, community)
         results.append(cs)
 
     results.sort(key=lambda x: x.get("opportunity_gap_score", 0), reverse=True)

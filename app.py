@@ -3,6 +3,7 @@ import io
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
 import streamlit as st
@@ -19,6 +20,12 @@ st.set_page_config(
     page_icon="📡",
     layout="centered",
 )
+
+# Load Ticketmaster key from Streamlit secrets or environment — never shown to user
+_tm_key = st.secrets.get("TICKETMASTER_API_KEY", "") if hasattr(st, "secrets") else ""
+_tm_key = _tm_key or os.environ.get("TICKETMASTER_API_KEY", "")
+if _tm_key:
+    os.environ["TICKETMASTER_API_KEY"] = _tm_key
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown(
@@ -48,7 +55,7 @@ with st.expander("How it works"):
 
 **Step 2** — Enter your key, describe your community, add your keywords, select your cities, and click **Run**
 
-**Step 3** — View your results on screen and download a CSV report
+**Step 3** — View your results on screen, track your outreach status, and download a CSV report
 
 > **Your API key is never stored.** It is used only for your current session and discarded when you close this page.
         """
@@ -120,12 +127,11 @@ Be specific. Use the actual language from the website. If cities are not mention
                         max_tokens=500,
                         messages=[{"role": "user", "content": extract_prompt}],
                     )
-                    import json as _json
                     import re as _re
                     raw = resp2.content[0].text.strip()
                     raw = _re.sub(r'```json\s*', '', raw)
                     raw = _re.sub(r'```\s*', '', raw)
-                    extracted = _json.loads(raw)
+                    extracted = json.loads(raw)
                     st.session_state["autofill_community"] = extracted.get("community", "")
                     st.session_state["autofill_keywords"] = ", ".join(extracted.get("keywords", []))
                     st.session_state["autofill_cities"] = set(extracted.get("cities", []))
@@ -201,7 +207,8 @@ run_button = st.button(
 
 
 # ── CSV generator ─────────────────────────────────────────────────────────────
-def generate_csv(events: list[dict]) -> bytes:
+def generate_csv(events: list[dict], tracker: dict = None) -> bytes:
+    tracker = tracker or {}
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -210,6 +217,11 @@ def generate_csv(events: list[dict]) -> bytes:
         "Attended (Y/N)", "Cost ($)", "Leads Generated", "Worth Repeating (Y/N)", "Notes"
     ])
     for e in events:
+        url = e.get("url", "")
+        status = tracker.get(url, "")
+        reached_out = "Y" if status in ("Contacted", "Meeting Booked", "Attending") else ""
+        meeting = "Y" if status == "Meeting Booked" else ""
+        attended = "Y" if status == "Attending" else ""
         writer.writerow([
             e.get("name", ""),
             e.get("city", ""),
@@ -217,9 +229,13 @@ def generate_csv(events: list[dict]) -> bytes:
             e.get("opportunity_score", ""),
             e.get("recommended_action", ""),
             e.get("action_reason", ""),
-            e.get("url", ""),
+            url,
             e.get("organizer", ""),
-            "", "", "", "", "", "", "", ""
+            status,
+            reached_out,
+            meeting,
+            attended,
+            "", "", "", ""
         ])
     return output.getvalue().encode("utf-8")
 
@@ -242,28 +258,20 @@ if run_button:
         st.error("Please select at least one city")
         st.stop()
 
-    # Parse keywords
     keywords = [k.strip().lower().replace(" ", "-") for k in keywords_raw.split(",") if k.strip()]
+    community_str = community_description.strip()
 
-    # Save profile for next visit
     save_profile({
-        "community": community_description.strip(),
+        "community": community_str,
         "keywords": keywords,
         "cities": selected_cities,
     })
 
-    # Set env vars so scoring modules pick them up
     os.environ["ANTHROPIC_API_KEY"] = anthropic_key
-
-    # Reload config with new profile values
-    import config
-    config.COMMUNITY = community_description.strip()
-    config.KEYWORDS = keywords
-    config.CITIES = selected_cities
 
     with st.status("Running the Radar...", expanded=True) as status:
         st.write("Scraping events across your selected cities...")
-        events = scrape_events(cities=selected_cities)
+        events = scrape_events(cities=selected_cities, keywords=keywords)
         st.write(f"Found {len(events)} events. Filtering past events...")
 
         if not events:
@@ -275,20 +283,28 @@ if run_button:
         last_error = ""
         progress = st.progress(0)
         sample = events[:150]
-        st.write(f"Scoring up to {len(sample)} events with Claude AI. This takes {len(sample)//20} to {len(sample)//10} minutes. Please keep this tab open...")
+        st.write(f"Scoring {len(sample)} events in parallel with Claude AI — this takes about 2 minutes...")
 
-        for i, event in enumerate(sample):
-            try:
-                result = score_event(event)
-                if "error" in result:
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(score_event, ev, community_str, keywords): ev
+                for ev in sample
+            }
+            for future in as_completed(futures):
+                completed_count += 1
+                ev = futures[future]
+                try:
+                    result = future.result()
+                    if "error" in result:
+                        failed += 1
+                        last_error = result.get("error", "")
+                    elif result.get("opportunity_score", 0) > 3:
+                        scored.append({**ev, **result})
+                except Exception as ex:
                     failed += 1
-                    last_error = result.get("error", "")
-                elif result.get("opportunity_score", 0) > 3:
-                    scored.append({**event, **result})
-            except Exception as ex:
-                failed += 1
-                last_error = str(ex)
-            progress.progress((i + 1) / len(sample))
+                    last_error = str(ex)
+                progress.progress(completed_count / len(sample))
 
         st.write(f"Scored {len(sample)} events: {len(scored)} passed, {failed} failed")
         if last_error:
@@ -301,27 +317,32 @@ if run_button:
         top_events = scored[:TOP_N_EVENTS]
 
         st.write("Scoring cities...")
-        city_scores = score_cities(top_events)
+        city_scores = score_cities(top_events, community=community_str)
 
         status.update(label="Done!", state="complete")
 
     st.session_state["top_events"] = top_events
     st.session_state["city_scores"] = city_scores
-    st.session_state["community_description"] = community_description
+    st.session_state["community_description"] = community_str
+    st.session_state.setdefault("tracker", {})
 
 # ── Results table ─────────────────────────────────────────────────────────
 top_events = st.session_state.get("top_events", [])
 city_scores = st.session_state.get("city_scores", [])
 community_description = st.session_state.get("community_description", community_description)
 
+_STATUS_OPTIONS = ["—", "Contacted", "Meeting Booked", "Attending", "Skip"]
+
 if top_events:
     st.markdown("### Your Top Events — Plan Ahead")
 
-    header_cols = st.columns([3, 1.5, 1.2, 1, 1.8, 2, 2])
-    for col, label in zip(header_cols, ["Event", "City", "Date", "Score", "Action", "Why", ""]):
+    header_cols = st.columns([3, 1.5, 1.2, 1, 1.8, 2, 1.5, 1.2])
+    for col, label in zip(header_cols, ["Event", "City", "Date", "Score", "Action", "Why", "Status", ""]):
         col.markdown(f"**{label}**")
 
     st.divider()
+
+    tracker = st.session_state.setdefault("tracker", {})
 
     for e in top_events:
         name_ev = e.get("name", "Untitled")
@@ -340,15 +361,29 @@ if top_events:
             score_md = f"{score}/10"
 
         event_key = f"outreach_{url or name_ev}"
+        current_status = tracker.get(url, "—")
 
-        row = st.columns([3, 1.5, 1.2, 1, 1.8, 2, 2])
+        row = st.columns([3, 1.5, 1.2, 1, 1.8, 2, 1.5, 1.2])
         row[0].markdown(f"[{name_ev}]({url})" if url else name_ev)
         row[1].write(city)
         row[2].write(start_date)
         row[3].markdown(score_md)
         row[4].write(action)
         row[5].write(why)
-        if row[6].button("Email", key=f"btn_{event_key}"):
+
+        new_status = row[6].selectbox(
+            "",
+            _STATUS_OPTIONS,
+            index=_STATUS_OPTIONS.index(current_status) if current_status in _STATUS_OPTIONS else 0,
+            key=f"status_{event_key}",
+            label_visibility="collapsed",
+        )
+        if new_status != "—":
+            tracker[url] = new_status
+        elif url in tracker:
+            del tracker[url]
+
+        if row[7].button("Email", key=f"btn_{event_key}"):
             st.session_state[f"show_{event_key}"] = not st.session_state.get(f"show_{event_key}", False)
 
         if st.session_state.get(f"show_{event_key}"):
@@ -389,7 +424,7 @@ Format the output as plain text only. Start with "Subject: " on the first line, 
 
     st.divider()
     today_str = date.today().strftime("%Y-%m-%d")
-    csv_bytes = generate_csv(top_events)
+    csv_bytes = generate_csv(top_events, st.session_state.get("tracker", {}))
     st.download_button(
         label="Download Report (CSV — opens in Excel)",
         data=csv_bytes,
@@ -413,7 +448,6 @@ Every time you update your community, keywords, or cities — copy the JSON belo
 4. Paste the JSON as the value and save
 5. Your next automated run will use this profile
 """)
-    import json as _json
     current_profile = {
         "community": community_description if community_description else saved_profile.get("community", ""),
         "keywords": [k.strip() for k in keywords_raw.split(",") if k.strip()] if keywords_raw else saved_profile.get("keywords", []),
@@ -421,7 +455,7 @@ Every time you update your community, keywords, or cities — copy the JSON belo
     }
     st.text_area(
         "Copy this and paste it as your RADAR_PROFILE secret on GitHub",
-        value=_json.dumps(current_profile, indent=2),
+        value=json.dumps(current_profile, indent=2),
         height=200,
         key="profile_json_display",
     )

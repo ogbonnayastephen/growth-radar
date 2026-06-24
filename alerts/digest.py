@@ -19,7 +19,33 @@ def _priority_badge(priority: str) -> str:
     return f'<span style="background:{bg};color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;">{label}</span>'
 
 
-def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) -> str:
+def _build_hot_cities_section(hot_cities: list[dict]) -> str:
+    if not hot_cities:
+        return ""
+    items = " &nbsp;·&nbsp; ".join(
+        f"<strong>{h['city']}</strong> ({h['multiplier']}x)" for h in hot_cities[:5]
+    )
+    return f"""
+        <!-- Hot Cities Alert -->
+        <tr>
+          <td style="padding:0 40px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding:16px 20px;background:#FFF8E7;border-left:4px solid #D4A017;border-radius:4px;">
+                  <p style="margin:0 0 4px;font-size:13px;font-weight:700;color:#7A5000;">
+                    Activity Surge This Week
+                  </p>
+                  <p style="margin:0;font-size:13px;color:#555;">
+                    {items} — these cities had a major spike in community events compared to last week.
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>"""
+
+
+def build_html(events: list[dict], city_scores: list[dict], total_scanned: int, hot_cities: list[dict] = None) -> str:
     today = date.today().strftime("%B %d, %Y")
     upcoming_count = len(events)
     cities_scored = len(city_scores)
@@ -65,6 +91,8 @@ def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) 
           <td style="padding:10px 8px;border-bottom:1px solid #eee;">{badge}</td>
           <td style="padding:10px 8px;border-bottom:1px solid #eee;font-size:13px;color:#444;">{first_action}</td>
         </tr>"""
+
+    hot_cities_section = _build_hot_cities_section(hot_cities or [])
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -116,6 +144,8 @@ def build_html(events: list[dict], city_scores: list[dict], total_scanned: int) 
             </table>
           </td>
         </tr>
+
+        {hot_cities_section}
 
         <!-- Events Table -->
         <tr>
@@ -183,6 +213,7 @@ def send_batch_email(
     total_scanned: int,
     resend_key: str = None,
     alert_email: str = None,
+    hot_cities: list[dict] = None,
 ):
     api_key = (resend_key or "").strip() or os.getenv("RESEND_API_KEY")
     to_email = (alert_email or "").strip() or os.getenv("ALERT_EMAIL")
@@ -194,7 +225,7 @@ def send_batch_email(
         print("[ERROR] No alert email provided or found in env")
         return
 
-    html = build_html(events, city_scores, total_scanned)
+    html = build_html(events, city_scores, total_scanned, hot_cities=hot_cities)
     today_date = date.today().strftime("%Y-%m-%d")
     top_city = city_scores[0]["city"] if city_scores else "N/A"
     subject = (
@@ -209,7 +240,7 @@ def send_batch_email(
             "Content-Type": "application/json",
         },
         json={
-            "from": "Growth Radar <onboarding@resend.dev>",
+            "from": os.getenv("RESEND_FROM_EMAIL", "Growth Radar <onboarding@resend.dev>"),
             "to": [to_email],
             "subject": subject,
             "html": html,

@@ -15,6 +15,8 @@ from scrapers.events import scrape_events
 from scoring.event_scorer import score_event
 from scoring.city_scorer import score_cities
 from alerts.digest import send_batch_email
+from dedup import filter_new, save_seen
+from city_history import get_hot_cities, save_history
 
 
 def _load_profile_into_config():
@@ -27,7 +29,6 @@ def _load_profile_into_config():
     """
     profile = {}
 
-    # Try env var first (GitHub Actions / cloud)
     radar_profile_env = os.environ.get("RADAR_PROFILE", "").strip()
     if radar_profile_env:
         try:
@@ -37,7 +38,6 @@ def _load_profile_into_config():
         except Exception as e:
             print(f"[WARN] Could not parse RADAR_PROFILE env var: {e}. Falling back to file.")
 
-    # Fall back to radar_profile.json
     if not profile:
         profile = load_profile()
         if profile:
@@ -70,10 +70,14 @@ def run_radar():
     raw_count = len(events)
     print(f"[INFO] Raw scraped events: {raw_count}")
 
-    # 2. Cap before scoring
+    # 2. Deduplicate against previous runs
+    events, skipped = filter_new(events)
+    print(f"[INFO] After dedup: {len(events)} new events ({skipped} seen in last 14 days, skipped)")
+
+    # 3. Cap before scoring
     events_to_score = events[:MAX_EVENTS_TO_SCORE]
 
-    # 3. Score events
+    # 4. Score events
     print(f"[INFO] Scoring {len(events_to_score)} events with Claude...")
     scored_events = []
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -86,36 +90,53 @@ def run_radar():
                 score_data = {"opportunity_score": 0, "alert_priority": "backlog", "error": "failed"}
             scored_events.append({**ev, **score_data})
 
-    # 4. Filter by score threshold
+    # 5. Filter by score threshold
     high_score_events = [e for e in scored_events if e.get("opportunity_score", 0) > MIN_SCORE_THRESHOLD]
     print(f"[INFO] Events with score > {MIN_SCORE_THRESHOLD}: {len(high_score_events)}")
 
-    # 5. Sort by date ascending
+    # 6. Sort by date ascending
     high_score_events.sort(key=lambda e: e.get("start_date") or "9999-99-99")
 
-    # 6. Keep top N
+    # 7. Keep top N
     top_events = high_score_events[:TOP_N_EVENTS]
     print(f"[INFO] Top {TOP_N_EVENTS} kept: {len(top_events)}")
 
-    # 7. Score cities
+    # 8. Save seen URLs so next run skips them
+    save_seen([e.get("url") for e in top_events])
+
+    # 9. Score cities + build city activity counts for hot-city detection
     print("[INFO] Scoring cities...")
     city_scores = score_cities(scored_events)
     print(f"[INFO] Cities scored: {len(city_scores)}")
 
-    # 8. Send email
+    city_counts = {}
+    for e in scored_events:
+        city = e.get("city", "")
+        if city:
+            city_counts[city] = city_counts.get(city, 0) + 1
+
+    hot_cities = get_hot_cities(city_counts)
+    save_history(city_counts)
+
+    if hot_cities:
+        print(f"[INFO] Hot cities this week: {', '.join(h['city'] + ' (' + str(h['multiplier']) + 'x)' for h in hot_cities)}")
+
+    # 10. Send email
     if top_events:
-        send_batch_email(top_events, city_scores, raw_count)
+        send_batch_email(top_events, city_scores, raw_count, hot_cities=hot_cities)
     else:
         print("[INFO] No high-score events found — skipping email.")
 
-    # 9. Summary
+    # 11. Summary
     print(f"\n{'='*60}")
     print("  RUN COMPLETE")
     print(f"{'='*60}")
     print(f"  Raw scraped:     {raw_count}")
+    print(f"  Deduped (new):   {len(events)}")
     print(f"  Score > {MIN_SCORE_THRESHOLD}:       {len(high_score_events)}")
     print(f"  Top {TOP_N_EVENTS} kept:     {len(top_events)}")
     print(f"  Cities scored:   {len(city_scores)}")
+    print(f"  Hot cities:      {len(hot_cities)}")
     print(f"{'='*60}\n")
 
 

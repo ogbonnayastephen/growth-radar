@@ -5,6 +5,9 @@ on:
     - cron: '0 10 * * 1'  # Every Monday 6am EST (10am UTC)
   workflow_dispatch:       # Allow manual trigger from GitHub UI
 
+permissions:
+  contents: write
+
 jobs:
   run-radar:
     runs-on: ubuntu-latest
@@ -28,3 +31,12 @@ jobs:
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
           RADAR_PROFILE: ${{ secrets.RADAR_PROFILE }}
+          TICKETMASTER_API_KEY: ${{ secrets.TICKETMASTER_API_KEY }}
+
+      - name: Save run state
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "Growth Radar Bot"
+          git add seen_events.json city_history.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update run state [skip ci]"
+          git push || true

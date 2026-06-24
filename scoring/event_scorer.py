@@ -19,11 +19,14 @@ def _get_client():
     return _CLIENT
 
 
-def _build_system_prompt() -> str:
-    community = getattr(config, "COMMUNITY", "business owners and entrepreneurs")
+def _build_system_prompt(community=None, keywords=None) -> str:
+    community = community or getattr(config, "COMMUNITY", "business owners and entrepreneurs")
+    kws = keywords or getattr(config, "KEYWORDS", [])
+    keywords_str = ", ".join(kws[:10]) if kws else "business, networking, community"
     return f"""You are a growth intelligence analyst helping a founder find events where they can grow, partner, and connect.
 
 The founder's target community is: {community}
+Keywords their community searches for: {keywords_str}
 
 Score each event for its value to this specific audience. Return ONLY valid JSON, no markdown, no explanation.
 
@@ -60,7 +63,7 @@ def parse_json_response(text: str) -> dict:
     return json.loads(text)
 
 
-def _call_claude(event: dict) -> dict:
+def _call_claude(event: dict, community=None, keywords=None) -> dict:
     user_msg = (
         f"Event Name: {event.get('name', 'Unknown')}\n"
         f"City: {event.get('city', 'Unknown')}\n"
@@ -72,16 +75,16 @@ def _call_claude(event: dict) -> dict:
     response = _get_client().messages.create(
         model=MODEL,
         max_tokens=500,
-        system=_build_system_prompt(),
+        system=_build_system_prompt(community, keywords),
         messages=[{"role": "user", "content": user_msg}],
     )
     text = response.content[0].text.strip()
     return parse_json_response(text)
 
 
-def score_event(event: dict) -> dict:
+def score_event(event: dict, community=None, keywords=None) -> dict:
     try:
-        result = _call_claude(event)
+        result = _call_claude(event, community, keywords)
         time.sleep(1.5)
         return result
     except Exception as e:
